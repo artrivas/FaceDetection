@@ -1,0 +1,7 @@
+fastapi>=0.110
+uvicorn[standard]>=0.29
+opencv-python>=4.10          # usa opencv-python-headless si no necesitas GUI
+torch>=2.3                   # elige la build con CPU o CUDA según tu hardware
+numpy>=1.26
+tensorflow>=2.14
+ultralytics>=8.2
