@@ -3,10 +3,24 @@
     "name": "pojorni-vision",
     "slug": "pojorni-vision",
     "version": "1.0.0",
-    "orientation": "portrait",
+    "orientation": "landscape",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
+    "plugins":[
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "La aplicación accede a tus fotos para enviar imágenes al servidor.",
+          "cameraPermission": "La aplicación accede a tu cámara para tomar fotos y enviarlas al servidor."
+        }
+      ],
+      [
+        "expo-screen-orientation", {
+          "initialOrientation": "LANDSCAPE"
+        }
+      ]
+    ],
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",

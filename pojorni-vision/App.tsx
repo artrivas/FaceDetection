@@ -1,8 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
-  Image,
   TextInput,
   TouchableOpacity,
   StyleSheet,
@@ -10,8 +9,11 @@ import {
   Dimensions,
   SafeAreaView,
   StatusBar,
-  ScrollView
+  ScrollView,
+  Image
 } from 'react-native';
+import { CameraView, CameraType, useCameraPermissions } from 'expo-camera';
+import * as FileSystem from 'expo-file-system';
 
 const { width, height } = Dimensions.get('window');
 
@@ -20,7 +22,26 @@ export default function App() {
   const [isConnected, setIsConnected] = useState(false);
   const [wsUrl, setWsUrl] = useState('ws://192.168.52.17:8080/ws');
   const [imageCount, setImageCount] = useState(0);
+  const [sentImageCount, setSentImageCount] = useState(0);
   const [ws, setWs] = useState(null);
+  const [clientId, setClientId] = useState(null);
+  
+  // Estados para streaming
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [permission, requestPermission] = useCameraPermissions();
+  const [cameraType, setCameraType] = useState('back');
+  const [streamingFPS, setStreamingFPS] = useState(10); // FPS del streaming (aumentado)
+  const [streamingQuality, setStreamingQuality] = useState(0.6); // Calidad más alta para HD
+  
+  const cameraRef = useRef(null);
+  const streamingIntervalRef = useRef(null);
+
+  // Solicitar permisos de cámara al cargar
+  useEffect(() => {
+    if (!permission?.granted) {
+      requestPermission();
+    }
+  }, []);
 
   const connectWebSocket = () => {
     try {
@@ -36,15 +57,28 @@ export default function App() {
         try {
           const data = JSON.parse(event.data);
           
-          if (data.type === 'image' && data.imageData) {
-            const newImage = {
-              imageData: data.imageData,
-              timestamp: Date.now(),
-              type: data.imageType || 'image/jpeg'
-            };
-            
-            setCurrentImage(newImage);
-            setImageCount(prev => prev + 1);
+          if (data.type === 'connection_established') {
+            setClientId(data.clientId);
+            console.log('Cliente conectado como:', data.clientId);
+          } else if (data.type === 'image' && data.imageData) {
+            // Solo mostrar imágenes que NO vengan de este cliente
+            if (data.senderId !== clientId) {
+              const newImage = {
+                imageData: data.imageData,
+                timestamp: Date.now(),
+                type: data.imageType || 'image/jpeg',
+                senderId: data.senderId
+              };
+              
+              setCurrentImage(newImage);
+              setImageCount(prev => prev + 1);
+            }
+          } else if (data.type === 'image_received') {
+            console.log('Frame enviado exitosamente');
+          } else if (data.type === 'server_message') {
+            console.log('Mensaje del servidor:', data.message);
+          } else if (data.type === 'error') {
+            console.error('Error del servidor:', data.message);
           }
         } catch (error) {
           console.error('Error parsing message:', error);
@@ -54,6 +88,8 @@ export default function App() {
       websocket.onclose = () => {
         setIsConnected(false);
         setWs(null);
+        setClientId(null);
+        stopStreaming(); // Detener streaming si se desconecta
         console.log('WebSocket desconectado');
       };
 
@@ -67,18 +103,110 @@ export default function App() {
   };
 
   const disconnectWebSocket = () => {
+    stopStreaming();
     if (ws) {
       ws.close();
     }
   };
 
-  const clearImage = () => {
-    setCurrentImage(null);
+  // Función para capturar y enviar un frame
+  const captureAndSendFrame = async () => {
+    if (!cameraRef.current || !ws || !isConnected) {
+      return;
+    }
+
+    try {
+      // Capturar foto sin preview, sonido ni animaciones
+      const photo = await cameraRef.current.takePictureAsync({
+        quality: streamingQuality,
+        base64: true,
+        skipProcessing: true, // Más rápido, sin procesamiento extra
+        imageType: 'jpg', // JPG es más rápido que PNG
+        exif: false, // Sin metadata EXIF para menor tamaño
+        additionalExif: {}, // Sin EXIF adicional
+        onPictureSaved: undefined, // Sin callbacks adicionales
+      });
+
+      // Enviar al servidor (sin esperar confirmación para mayor velocidad)
+      const message = {
+        type: 'send_image',
+        imageData: photo.base64,
+        imageType: 'image/jpeg',
+        broadcast: true,
+        streaming: true,
+        timestamp: Date.now()
+      };
+
+      // Fire-and-forget para máxima velocidad
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(message));
+        setSentImageCount(prev => prev + 1);
+      }
+      
+    } catch (error) {
+      // Silenciar errores de captura para no interrumpir el stream
+      console.warn('Frame skip:', error.message);
+    }
+  };
+
+  // Iniciar streaming
+  const startStreaming = () => {
+    if (!permission?.granted) {
+      Alert.alert('Error', 'No tienes permisos de cámara');
+      return;
+    }
+
+    if (!isConnected) {
+      Alert.alert('Error', 'Debes estar conectado para hacer streaming');
+      return;
+    }
+
+    setIsStreaming(true);
+    
+    // Configurar intervalo optimizado para capturar frames
+    const intervalMs = Math.max(100, 1000 / streamingFPS); // Mínimo 100ms entre frames
+    
+    // Usar setTimeout recursivo en lugar de setInterval para mejor control
+    const scheduleNextFrame = () => {
+      if (streamingIntervalRef.current) {
+        captureAndSendFrame().finally(() => {
+          if (streamingIntervalRef.current) {
+            streamingIntervalRef.current = setTimeout(scheduleNextFrame, intervalMs);
+          }
+        });
+      }
+    };
+
+    streamingIntervalRef.current = setTimeout(scheduleNextFrame, 0);
+    console.log(`Streaming HD HORIZONTAL iniciado a ${streamingFPS} FPS (1920x1080)`);
+  };
+
+  // Detener streaming
+  const stopStreaming = () => {
+    if (streamingIntervalRef.current) {
+      clearTimeout(streamingIntervalRef.current); // Cambiar a clearTimeout
+      streamingIntervalRef.current = null;
+    }
+    setIsStreaming(false);
+    console.log('Streaming detenido');
+  };
+
+  // Cambiar cámara (frontal/trasera)
+  const flipCamera = () => {
+    setCameraType(
+      cameraType === 'back' ? 'front' : 'back'
+    );
+  };
+
+  const clearStats = () => {
+    setSentImageCount(0);
     setImageCount(0);
+    setCurrentImage(null);
   };
 
   useEffect(() => {
     return () => {
+      stopStreaming();
       if (ws) {
         ws.close();
       }
@@ -89,27 +217,67 @@ export default function App() {
     return new Date(timestamp).toLocaleString();
   };
 
+  if (!permission) {
+    return (
+      <View style={styles.container}>
+        <Text>Cargando permisos de cámara...</Text>
+      </View>
+    );
+  }
+
+  if (!permission.granted) {
+    return (
+      <View style={styles.container}>
+        <Text>No hay acceso a la cámara</Text>
+        <TouchableOpacity onPress={requestPermission}>
+          <Text>Solicitar permisos</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" />
-      
+      <ScrollView
+      contentContainerStyle={{ flexGrow: 1 }}
+      /* needed on Android when you have a ScrollView inside another one */
+      nestedScrollEnabled
+      >
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.title}>Live Image Viewer</Text>
+        <Text style={styles.title}>Camera Streaming</Text>
         <View style={styles.statusContainer}>
           <View style={[
             styles.statusDot, 
             { backgroundColor: isConnected ? '#4CAF50' : '#F44336' }
           ]} />
           <Text style={styles.statusText}>
-            {isConnected ? 'Conectado' : 'Desconectado'}
+            {isConnected ? `Conectado${clientId ? ` (${clientId})` : ''}` : 'Desconectado'}
           </Text>
         </View>
-        {imageCount > 0 && (
-          <Text style={styles.imageCount}>
-            Imágenes recibidas: {imageCount}
-          </Text>
+        
+        {isStreaming && (
+          <View style={styles.streamingIndicator}>
+            <View style={styles.streamingDot} />
+            <Text style={styles.streamingText}>
+              📐 STREAMING HD HORIZONTAL ({streamingFPS} FPS)
+            </Text>
+          </View>
         )}
+        
+        <View style={styles.statsContainer}>
+          {imageCount > 0 && (
+            <Text style={styles.imageCount}>
+              📥 Recibidas: {imageCount}
+            </Text>
+          )}
+          {sentImageCount > 0 && (
+            <Text style={styles.imageCount}>
+              📤 Frames: {sentImageCount}
+            </Text>
+          )}
+        </View>
       </View>
 
       {/* Controls */}
@@ -119,7 +287,7 @@ export default function App() {
           placeholder="WebSocket URL"
           value={wsUrl}
           onChangeText={setWsUrl}
-          editable={!isConnected}
+          editable={!isConnected && !isStreaming}
         />
         
         <View style={styles.buttonContainer}>
@@ -129,6 +297,7 @@ export default function App() {
               { backgroundColor: isConnected ? '#F44336' : '#4CAF50' }
             ]}
             onPress={isConnected ? disconnectWebSocket : connectWebSocket}
+            disabled={isStreaming}
           >
             <Text style={styles.buttonText}>
               {isConnected ? 'Desconectar' : 'Conectar'}
@@ -137,22 +306,154 @@ export default function App() {
           
           <TouchableOpacity
             style={[styles.button, styles.clearButton]}
-            onPress={clearImage}
+            onPress={clearStats}
+            disabled={isStreaming}
           >
             <Text style={styles.buttonText}>Limpiar</Text>
           </TouchableOpacity>
         </View>
+
+        {/* Streaming Controls */}
+        {isConnected && (
+          <>
+            <View style={styles.streamingControls}>
+              <TouchableOpacity
+                style={[
+                  styles.streamingButton,
+                  { backgroundColor: isStreaming ? '#F44336' : '#4CAF50' }
+                ]}
+                onPress={isStreaming ? stopStreaming : startStreaming}
+              >
+                <Text style={styles.buttonText}>
+                  {isStreaming ? '⏹ Detener Stream' : '📐 Stream HD Horizontal'}
+                </Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity
+                style={[styles.smallButton, styles.flipButton]}
+                onPress={flipCamera}
+                disabled={isStreaming}
+              >
+                <Text style={styles.buttonText}>🔄</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Settings */}
+            <View style={styles.settingsContainer}>
+              <View style={styles.settingRow}>
+                <Text style={styles.settingLabel}>FPS: {streamingFPS}</Text>
+                <View style={styles.fpsButtons}>
+                  <TouchableOpacity
+                    style={[styles.fpsButton, streamingFPS === 5 && styles.activeButton]}
+                    onPress={() => setStreamingFPS(5)}
+                    disabled={isStreaming}
+                  >
+                    <Text style={styles.fpsButtonText}>5</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.fpsButton, streamingFPS === 10 && styles.activeButton]}
+                    onPress={() => setStreamingFPS(10)}
+                    disabled={isStreaming}
+                  >
+                    <Text style={styles.fpsButtonText}>10</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.fpsButton, streamingFPS === 15 && styles.activeButton]}
+                    onPress={() => setStreamingFPS(15)}
+                    disabled={isStreaming}
+                  >
+                    <Text style={styles.fpsButtonText}>15</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+              
+              <View style={styles.settingRow}>
+                <Text style={styles.settingLabel}>Calidad: {Math.round(streamingQuality * 100)}%</Text>
+                <View style={styles.fpsButtons}>
+                  <TouchableOpacity
+                    style={[styles.fpsButton, streamingQuality === 0.4 && styles.activeButton]}
+                    onPress={() => setStreamingQuality(0.4)}
+                    disabled={isStreaming}
+                  >
+                    <Text style={styles.fpsButtonText}>40%</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.fpsButton, streamingQuality === 0.6 && styles.activeButton]}
+                    onPress={() => setStreamingQuality(0.6)}
+                    disabled={isStreaming}
+                  >
+                    <Text style={styles.fpsButtonText}>60%</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.fpsButton, streamingQuality === 0.8 && styles.activeButton]}
+                    onPress={() => setStreamingQuality(0.8)}
+                    disabled={isStreaming}
+                  >
+                    <Text style={styles.fpsButtonText}>80%</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+              
+              {/* Selector de resolución */}
+              <View style={styles.settingRow}>
+                <Text style={styles.settingLabel}>Resolución</Text>
+                <View style={styles.fpsButtons}>
+                  <TouchableOpacity
+                    style={[styles.fpsButton, styles.activeButton]}
+                    disabled={true}
+                  >
+                    <Text style={styles.fpsButtonText}>HD</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.fpsButton]}
+                    onPress={() => Alert.alert('Info', 'Usando resolución HD 1920x1080 horizontal')}
+                  >
+                    <Text style={styles.fpsButtonText}>Info</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          </>
+        )}
       </View>
 
-      {/* Current Image Display */}
+      {/* Hidden Camera (sin preview) - CONFIGURADA PARA HORIZONTAL */}
+      <View style={styles.hiddenCameraContainer}>
+        <CameraView
+          ref={cameraRef}
+          animateShutter={false} // Sin animación de obturador
+          style={styles.hiddenCamera}
+          facing={cameraType}
+          mode="picture" // Modo foto para mejor calidad
+          videoQuality="1080p" // Calidad de video alta
+          pictureSize="1920x1080" // Tamaño de imagen horizontal
+          ratio="16:9" // Ratio horizontal (cambio de 4:3)
+          animationsEnabled={false}
+          enableTorch={false}
+          responsiveOrientationWhenOrientationLocked={true}
+          barcodeScannerSettings={{
+            barcodeTypes: [], // Deshabilitar escaner para mejor rendimiento
+          }}
+        />
+        <View style={styles.cameraOverlay}>
+          <Text style={styles.cameraText}>
+            🔇 Cámara {cameraType === 'back' ? 'Trasera' : 'Frontal'} HORIZONTAL
+          </Text>
+          <Text style={styles.cameraSubtext}>
+            {isStreaming ? `📐 HD ${streamingFPS} FPS (1920x1080)` : '📐 Lista para streaming HD horizontal'}
+          </Text>
+        </View>
+      </View>
+
+      {/* Received Images Display */}
       <ScrollView style={styles.imageContainer} contentContainerStyle={styles.imageContent}>
         {!currentImage ? (
           <View style={styles.emptyContainer}>
-            <Text style={styles.emptyIcon}>📷</Text>
+            <Text style={styles.emptyIcon}>📺</Text>
             <Text style={styles.emptyText}>
               {isConnected 
-                ? 'Esperando la primera imagen...' 
-                : 'Conéctate para recibir imágenes'
+                ? 'Esperando imágenes de otros clientes...\n\n📐 Tu streaming es HD HORIZONTAL (1920x1080)' 
+                : 'Conéctate para streaming HD horizontal'
               }
             </Text>
           </View>
@@ -164,17 +465,17 @@ export default function App() {
               resizeMode="contain"
             />
             
-            {/* Image Info */}
             <View style={styles.imageInfo}>
               <Text style={styles.imageInfoText}>
-                Tipo: {currentImage.type}
+                📡 De: {currentImage.senderId}
               </Text>
               <Text style={styles.imageInfoText}>
-                Recibida: {formatTimestamp(currentImage.timestamp)}
+                🕒 Recibida: {formatTimestamp(currentImage.timestamp)}
               </Text>
             </View>
           </View>
         )}
+      </ScrollView>
       </ScrollView>
     </SafeAreaView>
   );
@@ -199,7 +500,7 @@ const styles = StyleSheet.create({
   statusContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 5,
+    marginBottom: 8,
   },
   statusDot: {
     width: 10,
@@ -210,6 +511,27 @@ const styles = StyleSheet.create({
   statusText: {
     fontSize: 14,
     fontWeight: '500',
+  },
+  streamingIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  streamingDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#4CAF50', // Verde para silencioso
+    marginRight: 8,
+  },
+  streamingText: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: '#4CAF50', // Verde para silencioso
+  },
+  statsContainer: {
+    flexDirection: 'row',
+    gap: 15,
   },
   imageCount: {
     fontSize: 12,
@@ -232,6 +554,7 @@ const styles = StyleSheet.create({
   buttonContainer: {
     flexDirection: 'row',
     gap: 10,
+    marginBottom: 15,
   },
   button: {
     flex: 1,
@@ -246,6 +569,90 @@ const styles = StyleSheet.create({
     color: 'white',
     fontSize: 16,
     fontWeight: 'bold',
+  },
+  streamingControls: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 15,
+  },
+  streamingButton: {
+    flex: 1,
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  smallButton: {
+    width: 50,
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  flipButton: {
+    backgroundColor: '#9C27B0',
+  },
+  settingsContainer: {
+    backgroundColor: '#f8f8f8',
+    padding: 15,
+    borderRadius: 8,
+  },
+  settingRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  settingLabel: {
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  fpsButtons: {
+    flexDirection: 'row',
+    gap: 5,
+  },
+  fpsButton: {
+    backgroundColor: '#ddd',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 4,
+  },
+  activeButton: {
+    backgroundColor: '#2196F3',
+  },
+  fpsButtonText: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  hiddenCameraContainer: {
+    height: 100,
+    backgroundColor: '#000',
+    position: 'relative',
+  },
+  hiddenCamera: {
+    flex: 1,
+    opacity: 0.3, // Semi-transparente para mostrar que está activa
+  },
+  cameraOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.7)',
+  },
+  cameraText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: 'bold',
+    textAlign: 'center',
+  },
+  cameraSubtext: {
+    color: '#ccc',
+    fontSize: 12,
+    textAlign: 'center',
+    marginTop: 4,
   },
   imageContainer: {
     flex: 1,
@@ -275,7 +682,7 @@ const styles = StyleSheet.create({
   },
   currentImage: {
     width: '100%',
-    height: height * 0.5,
+    height: height * 0.4,
     backgroundColor: '#f0f0f0',
     borderRadius: 8,
   },
