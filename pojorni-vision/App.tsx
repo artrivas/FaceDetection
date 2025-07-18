@@ -20,7 +20,7 @@ const { width, height } = Dimensions.get('window');
 export default function App() {
   const [currentImage, setCurrentImage] = useState(null);
   const [isConnected, setIsConnected] = useState(false);
-  const [wsUrl, setWsUrl] = useState('ws://192.168.40.17:8080/ws');
+  const [wsUrl, setWsUrl] = useState('ws://192.168.201.17:8080/ws');
   const [imageCount, setImageCount] = useState(0);
   const [sentImageCount, setSentImageCount] = useState(0);
   const [ws, setWs] = useState(null);
