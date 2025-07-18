@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Cliente WebSocket - PyTorch Emotion Recognition</title>
+    <style>
+        /* ===== Colores base ===== */
+:root {
+  --primary: #2563eb;        /* Azul brillante           */
+  --primary-light: #3b82f6;
+  --primary-dark: #1d4ed8;
+  --accent: #f97316;         /* Naranja para acentos      */
+  --bg: #f9fafb;             /* Fondo general claro       */
+  --text: #1f2937;           /* Texto principal           */
+  --card-bg: #ffffff;        /* Fondo de tarjetas         */
+  --border: #e5e7eb;         /* Bordes sutiles            */
+  --success: #10b981;
+  --error: #ef4444;
+  --warn: #f59e0b;
+}
+
+/* ===== Reset ligero ===== */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  height: 100%;
+}
+
+body {
+  font-family: "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  color: var(--text);
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 2rem 1rem;
+}
+
+/* ===== Títulos ===== */
+h1 {
+  font-size: clamp(1.8rem, 2.5vw + 1rem, 2.5rem);
+  font-weight: 700;
+  color: var(--primary-dark);
+  margin-bottom: 1.5rem;
+  text-align: center;
+}
+
+h2 {
+  font-size: 1.25rem;
+  margin-bottom: 1rem;
+  color: var(--primary-dark);
+}
+
+/* ===== Tarjetas / Secciones ===== */
+.section {
+  width: 100%;
+  max-width: 800px;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1.5rem;
+  margin-bottom: 1.5rem;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.section:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.08);
+}
+
+/* ===== Modelo / Cliente info ===== */
+.model-info,
+.client-info {
+  width: 100%;
+  max-width: 800px;
+  background: var(--primary-light);
+  color: #fff;
+  border-radius: 10px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 500;
+}
+
+.client-info {
+  background: var(--accent);
+}
+
+/* ===== Botones ===== */
+button {
+  appearance: none;
+  border: none;
+  border-radius: 8px;
+  padding: 0.6rem 1.4rem;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #fff;
+  background: var(--primary);
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.1s ease;
+  margin: 0.25rem;
+}
+
+button:hover {
+  background: var(--primary-dark);
+}
+
+button:active {
+  transform: scale(0.97);
+}
+
+button.disabled,
+.disabled button {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+/* ===== Estado de conexión ===== */
+.status {
+  font-weight: 700;
+  margin-left: 0.5rem;
+}
+
+.status[data-state="Conectado"]  { color: var(--success); }
+.status[data-state="Desconectado"] { color: var(--error); }
+.status[data-state="Conectando…"] { color: var(--warn); }
+
+/* ===== Imágenes ===== */
+#imageContainer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  justify-content: center;
+}
+
+#imageContainer img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 10px;
+  border: 3px solid var(--primary-light);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+/* ===== Log de mensajes ===== */
+#messageLog {
+  height: 200px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.75rem;
+  background: #f3f4f6;
+  font-family: "Courier New", monospace;
+  font-size: 0.875rem;
+}
+
+#messageLog div {
+  margin-bottom: 0.25rem;
+}
+
+/* ===== Responsive ===== */
+@media (max-width: 600px) {
+  button {
+    width: 100%;
+  }
+}
+
+    </style>
+</head>
+<body>
+    <h1>Cliente WebSocket - Reconocimiento de Emociones con PyTorch</h1>
+
+    <div class="model-info">
+        <strong>🤖 Modelo PyTorch:</strong> Patt - Lite
+    </div>
+
+    <div class="section">
+        <h2>Conexión</h2>
+        <button onclick="connectWebSocket()">Conectar</button>
+        <button onclick="disconnectWebSocket()">Desconectar</button>
+        <span id="status" class="status">Desconectado</span>
+        <div id="clientInfo" class="client-info" style="display: none;">
+            <span id="clientId"></span> | Clientes conectados: <span id="totalClients">0</span>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>Imágenes con Análisis de Emociones</h2>
+        <div id="imageContainer"></div>
+    </div>
+
+    <div class="section">
+        <h2>Log de Mensajes</h2>
+        <div id="messageLog" style="height: 200px; overflow-y: scroll; border: 1px solid #ccc; padding: 10px; text-align: left;"></div>
+    </div>
+
+    <script>
+        let websocket = null;
+        let messageCount = 0;
+        let clientId = null;
+
+        function connectWebSocket() {
+            websocket = new WebSocket("ws://192.168.201.17:8080/ws");
+
+            websocket.onopen = function() {
+                updateStatus("Conectando...", "orange");
+                logMessage("Conectando al servidor WebSocket con modelo PyTorch...");
+            };
+
+            websocket.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    handleMessage(data);
+                } catch (error) {
+                    logMessage('Error parsing message: ' + error.message);
+                }
+            };
+
+            websocket.onclose = function() {
+                updateStatus("Desconectado", "red");
+                logMessage("Conexión cerrada");
+                hideClientInfo();
+            };
+
+            websocket.onerror = function(error) {
+                console.error("Error WebSocket:", error);
+                updateStatus("Error", "red");
+                logMessage("Error de conexión WebSocket");
+            };
+        }
+
+        function disconnectWebSocket() {
+            if (websocket) {
+                websocket.close();
+            }
+        }
+
+        function handleMessage(data) {
+            switch(data.type) {
+                case 'connection_established':
+                    clientId = data.clientId;
+                    updateStatus("Conectado", "green");
+                    logMessage(`Conectado como ${clientId} - Modelo PyTorch listo`);
+                    showClientInfo();
+                    break;
+                case 'image':
+                    displayReceivedImage(data.imageData, data.imageType, data.senderId);
+                    logMessage(`Imagen con análisis de emociones recibida de ${data.senderId}`);
+                    break;
+                case 'client_joined':
+                    logMessage(`Cliente ${data.clientId} se conectó. Total: ${data.totalClients}`);
+                    updateTotalClients(data.totalClients);
+                    break;
+                case 'client_left':
+                    logMessage(`Cliente ${data.clientId} se desconectó. Total: ${data.totalClients}`);
+                    updateTotalClients(data.totalClients);
+                    break;
+                case 'image_received':
+                    logMessage(`Confirmación: ${data.message}`);
+                    break;
+                case 'server_message':
+                    logMessage(`Servidor: ${data.message}`);
+                    break;
+                case 'error':
+                    logMessage(`Error: ${data.message}`);
+                    break;
+                case 'pong':
+                    logMessage('Pong recibido del servidor');
+                    break;
+                default:
+                    logMessage(`Mensaje no reconocido: ${data.type}`);
+            }
+        }
+
+        function displayReceivedImage(imageData, imageType, senderId) {
+            const container = document.getElementById('imageContainer');
+
+            // Si aún no hay imagen, créala una vez
+            let img = container.querySelector('img');
+            if (!img) {
+                img = document.createElement('img');
+                container.appendChild(img);
+            }
+
+            // Actualiza solo el src y el título
+            img.src   = `data:${imageType || 'image/jpeg'};base64,${imageData}`;
+            img.title = `Análisis de emociones por ${senderId} — ${new Date().toLocaleTimeString()}`;
+        }
+
+
+        function updateStatus(text, color) {
+            const status = document.getElementById("status");
+            status.textContent = text;
+            status.style.color = color;
+        }
+
+        function showClientInfo() {
+            document.getElementById('clientInfo').style.display = 'block';
+            document.getElementById('clientId').textContent = clientId;
+        }
+
+        function hideClientInfo() {
+            document.getElementById('clientInfo').style.display = 'none';
+        }
+
+        function updateTotalClients(total) {
+            document.getElementById('totalClients').textContent = total;
+        }
+
+        function logMessage(message) {
+            const log = document.getElementById('messageLog');
+            const timestamp = new Date().toLocaleTimeString();
+            log.innerHTML += `<div>[${timestamp}] ${message}</div>`;
+            log.scrollTop = log.scrollHeight;
+            messageCount++;
+
+            if (messageCount > 100) {
+                const lines = log.innerHTML.split('<div>');
+                log.innerHTML = '<div>' + lines.slice(-50).join('<div>');
+                messageCount = 50;
+            }
+        }
+
+        function sendPing() {
+            if (websocket && websocket.readyState === WebSocket.OPEN) {
+                websocket.send(JSON.stringify({type: 'ping'}));
+            }
+        }
+
+        // Ping automático cada 30 segundos
+        setInterval(sendPing, 30000);
+    </script>
+</body>
+</html>

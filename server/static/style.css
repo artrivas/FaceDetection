@@ -1,0 +1,166 @@
+/* ===== Colores base ===== */
+:root {
+  --primary: #2563eb;        /* Azul brillante           */
+  --primary-light: #3b82f6;
+  --primary-dark: #1d4ed8;
+  --accent: #f97316;         /* Naranja para acentos      */
+  --bg: #f9fafb;             /* Fondo general claro       */
+  --text: #1f2937;           /* Texto principal           */
+  --card-bg: #ffffff;        /* Fondo de tarjetas         */
+  --border: #e5e7eb;         /* Bordes sutiles            */
+  --success: #10b981;
+  --error: #ef4444;
+  --warn: #f59e0b;
+}
+
+/* ===== Reset ligero ===== */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  height: 100%;
+}
+
+body {
+  font-family: "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  color: var(--text);
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 2rem 1rem;
+}
+
+/* ===== Títulos ===== */
+h1 {
+  font-size: clamp(1.8rem, 2.5vw + 1rem, 2.5rem);
+  font-weight: 700;
+  color: var(--primary-dark);
+  margin-bottom: 1.5rem;
+  text-align: center;
+}
+
+h2 {
+  font-size: 1.25rem;
+  margin-bottom: 1rem;
+  color: var(--primary-dark);
+}
+
+/* ===== Tarjetas / Secciones ===== */
+.section {
+  width: 100%;
+  max-width: 800px;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1.5rem;
+  margin-bottom: 1.5rem;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.section:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.08);
+}
+
+/* ===== Modelo / Cliente info ===== */
+.model-info,
+.client-info {
+  width: 100%;
+  max-width: 800px;
+  background: var(--primary-light);
+  color: #fff;
+  border-radius: 10px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 500;
+}
+
+.client-info {
+  background: var(--accent);
+}
+
+/* ===== Botones ===== */
+button {
+  appearance: none;
+  border: none;
+  border-radius: 8px;
+  padding: 0.6rem 1.4rem;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #fff;
+  background: var(--primary);
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.1s ease;
+  margin: 0.25rem;
+}
+
+button:hover {
+  background: var(--primary-dark);
+}
+
+button:active {
+  transform: scale(0.97);
+}
+
+button.disabled,
+.disabled button {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+/* ===== Estado de conexión ===== */
+.status {
+  font-weight: 700;
+  margin-left: 0.5rem;
+}
+
+.status[data-state="Conectado"]  { color: var(--success); }
+.status[data-state="Desconectado"] { color: var(--error); }
+.status[data-state="Conectando…"] { color: var(--warn); }
+
+/* ===== Imágenes ===== */
+#imageContainer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  justify-content: center;
+}
+
+#imageContainer img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 10px;
+  border: 3px solid var(--primary-light);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+/* ===== Log de mensajes ===== */
+#messageLog {
+  height: 200px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.75rem;
+  background: #f3f4f6;
+  font-family: "Courier New", monospace;
+  font-size: 0.875rem;
+}
+
+#messageLog div {
+  margin-bottom: 0.25rem;
+}
+
+/* ===== Responsive ===== */
+@media (max-width: 600px) {
+  button {
+    width: 100%;
+  }
+}
